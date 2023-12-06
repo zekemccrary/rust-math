@@ -2,6 +2,9 @@ use std::fmt;
 use std::string::ToString;
 use std::str::FromStr;
 
+// this should ALWAYS be a float type because we need to use NAN
+type Float = f64;
+
 #[derive(Debug)]
 pub enum PolynomialStringError {
     EmptyStringError,
@@ -24,12 +27,60 @@ impl fmt::Display for PolynomialStringError {
 
 #[derive(Debug)]
 pub struct Polynomial {
-    terms: Vec<[f64; 2]>,
+    terms: Vec<[Float; 2]>,
 }
 
 impl Polynomial {
-    pub const fn new(v: Vec<[f64; 2]>) -> Polynomial {
+    pub const fn new(v: Vec<[Float; 2]>) -> Polynomial {
         Polynomial { terms: v }
+    }
+
+    pub fn simplify(&self) -> Polynomial {
+        const NINEK: f64 = 1000000000.0_f64;
+
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
+
+        'outer: for term in self.terms.iter() {
+            if term[0] == 0.0 { continue; }
+
+            for (i, build_term) in build.iter().enumerate() {
+                if term[1] == build_term[1] {
+                    // prevent floating point addition errors
+                    let num = term[0] + build_term[0];
+                    let round = num.floor();
+
+                    build[i] = [round + ((num - round) * NINEK).round() / NINEK, term[1]];
+                    continue 'outer;
+                }
+            }
+        
+            build.push(*term);
+        }
+
+        Polynomial{ terms: build }
+    }
+
+    pub fn organize(&self) -> Polynomial {
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
+        let mut index: usize;
+        
+        // dummy value bc of insert
+        build.push([0.0, f64::INFINITY]);
+
+        for term in self.terms.iter() {
+            index = 0;
+
+            for (i, build_term) in build.iter().enumerate() {
+                index = i;
+                if build_term[1] > term[1] { break; }
+            }
+
+            build.insert(index, term.clone());
+        }
+
+        let _ = build.pop();
+
+        Polynomial{ terms: build }
     }
 }
 
@@ -40,8 +91,7 @@ impl fmt::Display for Polynomial {
         let mut build = String::with_capacity(num_terms * 5 + 4); // 5(len - 1) + 4 = 5(len) - 1
 
         for (i, [coeff, exp]) in self.terms.iter().enumerate() {
-            // somebody please explain to me why i have to explicitly dereference
-            // also please look past the ugly match statement used to trick the compiler into letting me use one
+            // please look past the ugly match statement used to trick the compiler into letting me use one
             match *coeff {
                 // 0 * anything = 0
                 n if n == 0.0 => continue,
@@ -140,9 +190,9 @@ impl FromStr for Polynomial {
         }
 
 
-        fn parse_float(fstr: &mut String, err: char) -> Result<f64, PolynomialStringError> {
+        fn parse_float(fstr: &mut String, err: char) -> Result<Float, PolynomialStringError> {
 
-            if let Ok(n) = fstr.parse::<f64>() {
+            if let Ok(n) = fstr.parse::<Float>() {
                 *fstr = String::new();
                 return Ok(n);
             }
@@ -153,10 +203,10 @@ impl FromStr for Polynomial {
 
         let input = format!("{}+", s);
 
-        let mut parsed: Vec<[f64; 2]> = Vec::new();
+        let mut parsed: Vec<[Float; 2]> = Vec::new();
         let mut expected: Expected = Expected { modes: &[Mode::Number(0 as char), Mode::X] };
         let mut char_mode: Mode;
-        let mut arr_build = [f64::NAN; 2];
+        let mut arr_build = [Float::NAN; 2];
         let mut num_build = String::new();
         let mut sign_mode = true;
 
@@ -236,7 +286,7 @@ impl FromStr for Polynomial {
 
                     // reset for the next term
                     parsed.push(arr_build);
-                    arr_build = [f64::NAN; 2];
+                    arr_build = [Float::NAN; 2];
                 },
 
                 /*
@@ -248,7 +298,7 @@ impl FromStr for Polynomial {
                 Mode::Arrow => {
                     // 1.
                     if !arr_build[0].is_nan() && arr_build[1] == 1.0 {
-                        arr_build[1] = f64::NAN;
+                        arr_build[1] = Float::NAN;
 
                         if !sign_mode {
                             arr_build[0] *= -1.0;
