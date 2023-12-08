@@ -35,9 +35,20 @@ impl Polynomial {
         Polynomial { terms: v }
     }
 
-    pub fn simplify(&self) -> Polynomial {
+    // prevent floating point math errors
+    fn round_term(term: [Float; 2]) -> [Float; 2] {
         const NINEK: f64 = 1000000000.0_f64;
 
+        let round0 = term[0].round();
+        let round1 = term[1].round();
+
+        [
+            round0 + ((term[0] - round0) * NINEK).round() / NINEK,
+            round1 + ((term[1] - round1) * NINEK).round() / NINEK
+        ]
+    }
+
+    pub fn simplify(&self) -> Polynomial {
         let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
 
         'outer: for term in self.terms.iter() {
@@ -45,11 +56,7 @@ impl Polynomial {
 
             for (i, build_term) in build.iter().enumerate() {
                 if term[1] == build_term[1] {
-                    // prevent floating point addition errors
-                    let num = term[0] + build_term[0];
-                    let round = num.floor();
-
-                    build[i] = [round + ((num - round) * NINEK).round() / NINEK, term[1]];
+                    build[i] = Self::round_term( [term[0] + build_term[0], term[1]] );
                     continue 'outer;
                 }
             }
@@ -63,24 +70,41 @@ impl Polynomial {
     pub fn organize(&self) -> Polynomial {
         let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
         let mut index: usize;
-        
-        // dummy value bc of insert
-        build.push([0.0, f64::INFINITY]);
 
         for term in self.terms.iter() {
             index = 0;
 
             for (i, build_term) in build.iter().enumerate() {
                 index = i;
-                if build_term[1] > term[1] { break; }
+                if build_term[1] < term[1] { break; }
             }
 
-            build.insert(index, term.clone());
+            if index == build.len().saturating_sub(1) {
+                build.push(term.clone());
+            }
+            else {
+                build.insert(index, term.clone());
+            }
         }
 
-        let _ = build.pop();
-
         Polynomial{ terms: build }
+    }
+
+    pub fn mult(&self, poly: &Polynomial) -> Polynomial {
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len() + poly.terms.len());
+
+        for term1 in self.terms.iter() {
+            for term2 in poly.terms.iter() {
+                build.push(
+                    Self::round_term( [ term1[0] * term2[0],
+                                        term1[1] + term2[1] ] )
+                );
+            }
+        }
+
+        (Polynomial{ terms: build })
+                .simplify()
+                .organize()
     }
 }
 

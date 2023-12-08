@@ -17,15 +17,10 @@ fn main() -> Result<(), PolynomialStringError> {
     println!{"{}", poly};
     */
 
-    let poly = Polynomial::new(vec![[2.5, 2.0], [4.6, 3.0], [3.0, 2.0], [1.0, 0.3], [2.1, 3.0], [0.0, -13.0], [0.239, -6.2], [1.1, -6.3], [0.5, -6.2]]);
-    let simplified = poly.simplify();
-    let organized = poly.organize();
-    let both = simplified.organize();
-    println!("");
-    println!("raw: {}", poly);
-    println!("simplified: {}", simplified);
-    println!("organized: {}", organized);
-    println!("both: {}", both);
+    let poly1 = Polynomial::new(  vec![ [2.4, 3.3], [1.5, 0.7], [4.2, -1.1] ]  );
+    let poly2 = Polynomial::new(  vec![ [6.01, 1.9], [3.2, -0.3] ]  );
+
+    println!("{}", Polynomial::mult(&poly1, &poly2) );
 
     Ok(())
 }
