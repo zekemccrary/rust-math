@@ -8,8 +8,8 @@ type Float = f64;
 #[derive(Debug)]
 pub enum PolynomialStringError {
     EmptyStringError,
-    ParseError(char),
-    ParenthesesError(bool),
+    ParseError(usize, char),
+    ParenthesesError(usize, bool),
 }
 
 impl std::error::Error for PolynomialStringError {}
@@ -18,9 +18,9 @@ impl fmt::Display for PolynomialStringError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         use PolynomialStringError::*;
         match self {
-            EmptyStringError    => write!(formatter, "No polynomial found in string"                              ),
-            ParseError(c)    => write!(formatter, "Failure to parse, encountered character: {}", c      ),
-            ParenthesesError(b) => write!(formatter, "Illegal {} parentheses", if *b { "open" } else { "close" }  ),
+            EmptyStringError       => write!(formatter, "No polynomial found in string"),
+            ParseError(i, c)       => write!(formatter, "Failure to parse, encountered character {} at index {}", c, i),
+            ParenthesesError(i, b) => write!(formatter, "Illegal {} parentheses at index {}", if *b { "open" } else { "close" }, i ),
         }
     }
 }
@@ -156,6 +156,8 @@ impl FromStr for Polynomial {
     type Err = PolynomialStringError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() == 0 { return Err(Self::Err::EmptyStringError); }
+
         enum Mode {
             Number(char),
             X,
@@ -164,20 +166,18 @@ impl FromStr for Polynomial {
         }
         
         impl Mode {
-            // TODO: change to only use one return keyword
-            const fn new(c: char) -> Result<Self, PolynomialStringError> {
-                return match c {
+            const fn new(i: usize, c: char) -> Result<Self, PolynomialStringError> {
+                match c {
                     '^'                     => Ok(  Self::Arrow                                      ),
                     'x' | 'X'               => Ok(  Self::X                                          ),
                     '+' | '-'               => Ok(  Self::Operator(if c == '+' {true} else {false})  ),
                     '.'                     => Ok(  Self::Number(c)                                  ),
                     _ if c.is_ascii_digit() => Ok(  Self::Number(c)                                  ),
         
-                    _                       => Err(PolynomialStringError::ParseError(c)),
+                    _                       => Err(PolynomialStringError::ParseError(i, c)),
                 }
             }
         
-            // TODO: change to only use one return keyword
             fn char(&self) -> char {
                 use Mode::*;
                 match self {
@@ -193,7 +193,7 @@ impl FromStr for Polynomial {
         struct Expected<'a> { modes: &'a [Mode] }
         
         impl Expected<'_> {
-            fn matches(&self, mode: &Mode) -> Result<Self, PolynomialStringError> {
+            fn matches(&self, i: usize, mode: &Mode) -> Result<Self, PolynomialStringError> {
                 use std::mem::discriminant;
         
                 for m in self.modes {
@@ -204,24 +204,24 @@ impl FromStr for Polynomial {
                     return match mode {
                         Number(_)   => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), X, Arrow ] }),
                         X           => Ok(Expected{ modes: &[ Operator(false), Arrow ] }),
-                        Operator(_) => Ok(Expected{ modes: &[ Number(0 as char), X ] }),
+                        Operator(_) => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), X ] }),
                         Arrow       => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), Arrow ] }),
                     }
                 }
         
-                Err(PolynomialStringError::ParseError(mode.char()))
+                Err(PolynomialStringError::ParseError(i, mode.char()))
             }
         }
 
 
-        fn parse_float(fstr: &mut String, err: char) -> Result<Float, PolynomialStringError> {
+        fn parse_float(i: usize, fstr: &mut String, err: char) -> Result<Float, PolynomialStringError> {
 
             if let Ok(n) = fstr.parse::<Float>() {
                 *fstr = String::new();
                 return Ok(n);
             }
         
-            Err(PolynomialStringError::ParseError(err))
+            Err(PolynomialStringError::ParseError(i, err))
         }
 
 
@@ -234,11 +234,11 @@ impl FromStr for Polynomial {
         let mut num_build = String::new();
         let mut sign_mode = true;
 
-        for c in input.chars() {
+        for (i, c) in input.chars().enumerate() {
             if c == ' ' { continue; }
 
-            char_mode = Mode::new(c)?;
-            expected = expected.matches(&char_mode)?;
+            char_mode = Mode::new(i, c)?;
+            expected = expected.matches(i, &char_mode)?;
 
             match char_mode {
                 Mode::Number(c) => num_build.push(c),
@@ -257,19 +257,22 @@ impl FromStr for Polynomial {
 
                     // 2.
                     if arr_build[0].is_nan() {
-                        arr_build[0] = parse_float(&mut num_build, 'x')?;
+                        arr_build[0] = parse_float(i, &mut num_build, 'x')?;
                         arr_build[1] = 1.0;
                     }
-                    else { return Err(PolynomialStringError::ParseError('x')); }
+                    else { return Err(PolynomialStringError::ParseError(i, 'x')); }
                 },
 
                 /*
                     Cases to handle:
                     1. no X was found ->
-                        parse num_build to coefficient
-                        apply coefficient sign
-                        set exponent to 0
-                        reset variables
+                        1. this operator is for the coefficient
+                            set sign_mode
+                        2. this operator ends the term
+                            parse num_build to coefficient
+                            apply coefficient sign
+                            set exponent to 0
+                            reset variables
                     2. X was found but no arrow ->
                         reset variables (everything else has already been done)
                     3. X was found and arrow was found ->
@@ -285,8 +288,16 @@ impl FromStr for Polynomial {
 
                     // 1.
                     if arr_build[0].is_nan() {
-                        arr_build[0] = parse_float(&mut num_build, c)? * (if sign_mode {1.0} else {-1.0});
-                        arr_build[1] = 0.0;
+                        // 1.1.
+                        if num_build.len() == 0 && !b {
+                            sign_mode = b;
+                            continue;
+                        }
+                        // 1.2.
+                        else {
+                            arr_build[0] = parse_float(i, &mut num_build, c)? * (if sign_mode {1.0} else {-1.0});
+                            arr_build[1] = 0.0;
+                        }
                     }
                     // 3.
                     else if arr_build[1].is_nan() {
@@ -297,13 +308,13 @@ impl FromStr for Polynomial {
                         }
                         // 3.2.
                         else {
-                            arr_build[1] = parse_float(&mut num_build, c)?;
+                            arr_build[1] = parse_float(i, &mut num_build, c)?;
                             if !sign_mode { arr_build[1] *= -1.0; }
                         }
                     }
                     // 2. (in a way)
                     else if arr_build[1] != 1.0 {
-                        return Err(PolynomialStringError::ParseError(c));
+                        return Err(PolynomialStringError::ParseError(i, c));
                     }
 
                     sign_mode = b;
@@ -330,7 +341,7 @@ impl FromStr for Polynomial {
                         }
                     }
                     else {
-                        return Err(PolynomialStringError::ParseError('^'));
+                        return Err(PolynomialStringError::ParseError(i, '^'));
                     }
                 },
             }
