@@ -2,11 +2,14 @@ use std::fmt;
 use std::string::ToString;
 use std::str::FromStr;
 
+// this should ALWAYS be a float type because we need to use NAN
+type Float = f64;
+
 #[derive(Debug)]
 pub enum PolynomialStringError {
     EmptyStringError,
-    ParseError(char),
-    ParenthesesError(bool),
+    ParseError(usize, char),
+    ParenthesesError(usize, bool),
 }
 
 impl std::error::Error for PolynomialStringError {}
@@ -15,21 +18,93 @@ impl fmt::Display for PolynomialStringError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         use PolynomialStringError::*;
         match self {
-            EmptyStringError    => write!(formatter, "No polynomial found in string"                              ),
-            ParseError(c)    => write!(formatter, "Failure to parse, encountered character: {}", c      ),
-            ParenthesesError(b) => write!(formatter, "Illegal {} parentheses", if *b { "open" } else { "close" }  ),
+            EmptyStringError       => write!(formatter, "No polynomial found in string"),
+            ParseError(i, c)       => write!(formatter, "Failure to parse, encountered character {} at index {}", c, i),
+            ParenthesesError(i, b) => write!(formatter, "Illegal {} parentheses at index {}", if *b { "open" } else { "close" }, i ),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Polynomial {
-    terms: Vec<[f64; 2]>,
+    terms: Vec<[Float; 2]>,
 }
 
 impl Polynomial {
-    pub const fn new(v: Vec<[f64; 2]>) -> Polynomial {
+    pub const fn new(v: Vec<[Float; 2]>) -> Polynomial {
         Polynomial { terms: v }
+    }
+
+    // prevent floating point math errors
+    fn round_term(term: [Float; 2]) -> [Float; 2] {
+        const NINEK: f64 = 1000000000.0_f64;
+
+        let round0 = term[0].round();
+        let round1 = term[1].round();
+
+        [
+            round0 + ((term[0] - round0) * NINEK).round() / NINEK,
+            round1 + ((term[1] - round1) * NINEK).round() / NINEK
+        ]
+    }
+
+    pub fn simplify(&self) -> Polynomial {
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
+
+        'outer: for term in self.terms.iter() {
+            if term[0] == 0.0 { continue; }
+
+            for (i, build_term) in build.iter().enumerate() {
+                if term[1] == build_term[1] {
+                    build[i] = Self::round_term( [term[0] + build_term[0], term[1]] );
+                    continue 'outer;
+                }
+            }
+        
+            build.push(*term);
+        }
+
+        Polynomial{ terms: build }
+    }
+
+    pub fn organize(&self) -> Polynomial {
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len());
+        let mut index: usize;
+
+        for term in self.terms.iter() {
+            index = 0;
+
+            for (i, build_term) in build.iter().enumerate() {
+                index = i;
+                if build_term[1] < term[1] { break; }
+            }
+
+            if index == build.len().saturating_sub(1) {
+                build.push(term.clone());
+            }
+            else {
+                build.insert(index, term.clone());
+            }
+        }
+
+        Polynomial{ terms: build }
+    }
+
+    pub fn mult(&self, poly: &Polynomial) -> Polynomial {
+        let mut build: Vec<[Float; 2]> = Vec::with_capacity(self.terms.len() + poly.terms.len());
+
+        for term1 in self.terms.iter() {
+            for term2 in poly.terms.iter() {
+                build.push(
+                    Self::round_term( [ term1[0] * term2[0],
+                                        term1[1] + term2[1] ] )
+                );
+            }
+        }
+
+        (Polynomial{ terms: build })
+                .simplify()
+                .organize()
     }
 }
 
@@ -40,8 +115,7 @@ impl fmt::Display for Polynomial {
         let mut build = String::with_capacity(num_terms * 5 + 4); // 5(len - 1) + 4 = 5(len) - 1
 
         for (i, [coeff, exp]) in self.terms.iter().enumerate() {
-            // somebody please explain to me why i have to explicitly dereference
-            // also please look past the ugly match statement used to trick the compiler into letting me use one
+            // please look past the ugly match statement used to trick the compiler into letting me use one
             match *coeff {
                 // 0 * anything = 0
                 n if n == 0.0 => continue,
@@ -82,6 +156,8 @@ impl FromStr for Polynomial {
     type Err = PolynomialStringError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.len() == 0 { return Err(Self::Err::EmptyStringError); }
+
         enum Mode {
             Number(char),
             X,
@@ -90,20 +166,18 @@ impl FromStr for Polynomial {
         }
         
         impl Mode {
-            // TODO: change to only use one return keyword
-            const fn new(c: char) -> Result<Self, PolynomialStringError> {
-                return match c {
+            const fn new(i: usize, c: char) -> Result<Self, PolynomialStringError> {
+                match c {
                     '^'                     => Ok(  Self::Arrow                                      ),
                     'x' | 'X'               => Ok(  Self::X                                          ),
                     '+' | '-'               => Ok(  Self::Operator(if c == '+' {true} else {false})  ),
                     '.'                     => Ok(  Self::Number(c)                                  ),
                     _ if c.is_ascii_digit() => Ok(  Self::Number(c)                                  ),
         
-                    _                       => Err(PolynomialStringError::ParseError(c)),
+                    _                       => Err(PolynomialStringError::ParseError(i, c)),
                 }
             }
         
-            // TODO: change to only use one return keyword
             fn char(&self) -> char {
                 use Mode::*;
                 match self {
@@ -119,7 +193,7 @@ impl FromStr for Polynomial {
         struct Expected<'a> { modes: &'a [Mode] }
         
         impl Expected<'_> {
-            fn matches(&self, mode: &Mode) -> Result<Self, PolynomialStringError> {
+            fn matches(&self, i: usize, mode: &Mode) -> Result<Self, PolynomialStringError> {
                 use std::mem::discriminant;
         
                 for m in self.modes {
@@ -130,41 +204,41 @@ impl FromStr for Polynomial {
                     return match mode {
                         Number(_)   => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), X, Arrow ] }),
                         X           => Ok(Expected{ modes: &[ Operator(false), Arrow ] }),
-                        Operator(_) => Ok(Expected{ modes: &[ Number(0 as char), X ] }),
+                        Operator(_) => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), X ] }),
                         Arrow       => Ok(Expected{ modes: &[ Number(0 as char), Operator(false), Arrow ] }),
                     }
                 }
         
-                Err(PolynomialStringError::ParseError(mode.char()))
+                Err(PolynomialStringError::ParseError(i, mode.char()))
             }
         }
 
 
-        fn parse_float(fstr: &mut String, err: char) -> Result<f64, PolynomialStringError> {
+        fn parse_float(i: usize, fstr: &mut String, err: char) -> Result<Float, PolynomialStringError> {
 
-            if let Ok(n) = fstr.parse::<f64>() {
+            if let Ok(n) = fstr.parse::<Float>() {
                 *fstr = String::new();
                 return Ok(n);
             }
         
-            Err(PolynomialStringError::ParseError(err))
+            Err(PolynomialStringError::ParseError(i, err))
         }
 
 
         let input = format!("{}+", s);
 
-        let mut parsed: Vec<[f64; 2]> = Vec::new();
+        let mut parsed: Vec<[Float; 2]> = Vec::new();
         let mut expected: Expected = Expected { modes: &[Mode::Number(0 as char), Mode::X] };
         let mut char_mode: Mode;
-        let mut arr_build = [f64::NAN; 2];
+        let mut arr_build = [Float::NAN; 2];
         let mut num_build = String::new();
         let mut sign_mode = true;
 
-        for c in input.chars() {
+        for (i, c) in input.chars().enumerate() {
             if c == ' ' { continue; }
 
-            char_mode = Mode::new(c)?;
-            expected = expected.matches(&char_mode)?;
+            char_mode = Mode::new(i, c)?;
+            expected = expected.matches(i, &char_mode)?;
 
             match char_mode {
                 Mode::Number(c) => num_build.push(c),
@@ -183,19 +257,22 @@ impl FromStr for Polynomial {
 
                     // 2.
                     if arr_build[0].is_nan() {
-                        arr_build[0] = parse_float(&mut num_build, 'x')?;
+                        arr_build[0] = parse_float(i, &mut num_build, 'x')?;
                         arr_build[1] = 1.0;
                     }
-                    else { return Err(PolynomialStringError::ParseError('x')); }
+                    else { return Err(PolynomialStringError::ParseError(i, 'x')); }
                 },
 
                 /*
                     Cases to handle:
                     1. no X was found ->
-                        parse num_build to coefficient
-                        apply coefficient sign
-                        set exponent to 0
-                        reset variables
+                        1. this operator is for the coefficient
+                            set sign_mode
+                        2. this operator ends the term
+                            parse num_build to coefficient
+                            apply coefficient sign
+                            set exponent to 0
+                            reset variables
                     2. X was found but no arrow ->
                         reset variables (everything else has already been done)
                     3. X was found and arrow was found ->
@@ -211,8 +288,16 @@ impl FromStr for Polynomial {
 
                     // 1.
                     if arr_build[0].is_nan() {
-                        arr_build[0] = parse_float(&mut num_build, c)? * (if sign_mode {1.0} else {-1.0});
-                        arr_build[1] = 0.0;
+                        // 1.1.
+                        if num_build.len() == 0 && !b {
+                            sign_mode = b;
+                            continue;
+                        }
+                        // 1.2.
+                        else {
+                            arr_build[0] = parse_float(i, &mut num_build, c)? * (if sign_mode {1.0} else {-1.0});
+                            arr_build[1] = 0.0;
+                        }
                     }
                     // 3.
                     else if arr_build[1].is_nan() {
@@ -223,20 +308,20 @@ impl FromStr for Polynomial {
                         }
                         // 3.2.
                         else {
-                            arr_build[1] = parse_float(&mut num_build, c)?;
+                            arr_build[1] = parse_float(i, &mut num_build, c)?;
                             if !sign_mode { arr_build[1] *= -1.0; }
                         }
                     }
                     // 2. (in a way)
                     else if arr_build[1] != 1.0 {
-                        return Err(PolynomialStringError::ParseError(c));
+                        return Err(PolynomialStringError::ParseError(i, c));
                     }
 
                     sign_mode = b;
 
                     // reset for the next term
                     parsed.push(arr_build);
-                    arr_build = [f64::NAN; 2];
+                    arr_build = [Float::NAN; 2];
                 },
 
                 /*
@@ -248,7 +333,7 @@ impl FromStr for Polynomial {
                 Mode::Arrow => {
                     // 1.
                     if !arr_build[0].is_nan() && arr_build[1] == 1.0 {
-                        arr_build[1] = f64::NAN;
+                        arr_build[1] = Float::NAN;
 
                         if !sign_mode {
                             arr_build[0] *= -1.0;
@@ -256,7 +341,7 @@ impl FromStr for Polynomial {
                         }
                     }
                     else {
-                        return Err(PolynomialStringError::ParseError('^'));
+                        return Err(PolynomialStringError::ParseError(i, '^'));
                     }
                 },
             }
