@@ -1,4 +1,4 @@
-#[path = "./utils/polynomial.rs"]
+#[path = "./structs/polynomial.rs"]
 mod polynomial;
 
 use polynomial::{Polynomial, PolynomialStringError};
