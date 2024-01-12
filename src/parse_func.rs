@@ -1,19 +1,14 @@
 #[path = "./structs/functions.rs"]
 mod functions;
+use functions::MathFunction;
+
 
 pub fn main() {
-    let func = functions::Number(3.14);
 
-    println!("Number(3.14): {}", func);
+    let x = Box::new( functions::SquareRoot(functions::Exp(functions::X, functions::Number(3.0))) );
+
+    let mf = MathFunction::new(x);
+
+    println!("{}", mf);
+
 }
-
-/*
-
-let func = OpFunc::Add(
-        OpFunc::Multiply(
-            Number(3.14), X
-        ),
-        Number(4.2)
-    );
-
-*/
